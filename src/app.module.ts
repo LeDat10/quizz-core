@@ -6,6 +6,7 @@ import databaseConfig from './shared/config/database.config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { S3Module } from './shared/infrastructure/aws/s3.module';
 import { PemService } from './shared/infrastructure/aws/pem.service';
+import { Category } from './modules/category/domain/entities/category.entity';
 
 const ENV = process.env.NODE_ENV;
 
@@ -39,7 +40,7 @@ const ENV = process.env.NODE_ENV;
           username: configService.get<string>('database.username'),
           password: configService.get<string>('database.password'),
           database: configService.get<string>('database.database'),
-          entities: [],
+          entities: [Category],
         };
       },
     }),
