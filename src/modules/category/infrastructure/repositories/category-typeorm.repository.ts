@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { CategoryRepository } from '../../domain/interfaces/category-repository.interfact';
+import { CategoryRepository } from '../../domain/interfaces/category-repository.interface';
 import { Category } from '../../domain/entities/category.entity';
 import { QueryRunner, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
