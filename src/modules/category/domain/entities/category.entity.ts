@@ -4,7 +4,7 @@ import {
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
-  OneToMany,
+  // OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -42,6 +42,7 @@ export class Category {
   @Column({
     nullable: false,
     type: 'integer',
+    unique: true,
   })
   position: number;
 

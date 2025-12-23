@@ -9,4 +9,5 @@ export interface CategoryRepository {
     queryRunner: QueryRunner,
   ): Promise<Category | null>;
   save(category: Category): Promise<Category>;
+  maxPosition(): Promise<number>;
 }

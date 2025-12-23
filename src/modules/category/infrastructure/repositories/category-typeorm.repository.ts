@@ -10,12 +10,15 @@ export class CategoryTypeOrmRepository implements CategoryRepository {
     @InjectRepository(Category)
     private readonly repository: Repository<Category>,
   ) {}
+
   findById(id: string): Promise<Category | null> {
     return this.repository.findOneBy({ id });
   }
+
   findBySlug(slug: string): Promise<Category | null> {
-    throw new Error('Method not implemented.');
+    return this.repository.findOneBy({ slug });
   }
+
   findAndLockBySlug(
     slug: string,
     queryRunner: QueryRunner,
@@ -26,7 +29,18 @@ export class CategoryTypeOrmRepository implements CategoryRepository {
       .setLock('pessimistic_write', undefined, ['chapter'])
       .getOne();
   }
+
   save(category: Category): Promise<Category> {
     return this.repository.save(category);
+  }
+
+  async maxPosition(): Promise<number> {
+    const result: { max: string | null } | undefined = await this.repository
+      .createQueryBuilder('category')
+      .select('MAX(category.position)', 'max')
+      .getRawOne();
+
+    const maxPosition = result?.max ? Number(result.max) : 0;
+    return maxPosition;
   }
 }
