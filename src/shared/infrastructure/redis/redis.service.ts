@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import Redis from 'ioredis';
 import { v4 as uuidv4 } from 'uuid';
 import { CircuitBreakerService, CircuitState } from './circuit-breaker.service';
-import { DataSource, QueryRunner } from 'typeorm';
+import { QueryRunner } from 'typeorm';
 import { MetricsService } from './metrics.service';
 @Injectable()
 export class RedisService implements OnModuleInit {
@@ -11,7 +11,6 @@ export class RedisService implements OnModuleInit {
 
   constructor(
     @Inject('REDIS_CLIENT') private readonly redisClient: Redis,
-    private readonly dataSource: DataSource,
     private readonly metricsService: MetricsService,
   ) {
     this.circuitBreaker = new CircuitBreakerService({

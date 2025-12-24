@@ -1,30 +1,33 @@
 import {
   ConflictException,
   HttpException,
+  Inject,
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { CategoryRepository } from '../../domain/interfaces/category-repository.interface';
-import { CreateCategoryDto } from '../dtos/create-category.dto';
+import { CategoryRepository } from '../../../domain/interfaces/category-repository.interface';
+import { AdminCreateCategoryDto } from '../dtos/admin-create-category.admin.dto';
 import {
   generateRadomString,
   generateSlug,
 } from 'src/shared/common/utils/slug.until';
-import { DataSource } from 'typeorm';
+import { DataSource, QueryRunner } from 'typeorm';
 import { RedisService } from 'src/shared/infrastructure/redis/redis.service';
-import { Category } from '../../domain/entities/category.entity';
+import { Category } from '../../../domain/entities/category.entity';
 
 @Injectable()
-export class CreateCategoryService {
-  private logger = new Logger(CreateCategoryService.name);
-
+export class AdminCreateCategoryService {
+  private logger = new Logger(AdminCreateCategoryService.name);
+  private readonly MAX_SLUG_RETRIES = 5;
+  private readonly LOCK_TTL = 5000;
   constructor(
     private readonly connection: DataSource,
+    @Inject('CATEGORY_REPOSITORY')
     private readonly categoryRepo: CategoryRepository,
     private readonly redisService: RedisService,
   ) {}
 
-  async execute(dto: CreateCategoryDto) {
+  async execute(dto: AdminCreateCategoryDto): Promise<Category> {
     if (!dto) {
       const reason = 'CreateCategoryDto is null or undefined';
       this.logger.error(reason);
@@ -41,42 +44,18 @@ export class CreateCategoryService {
     let lockMaxPositionKey: string | null = null;
 
     try {
-      let slug = generateSlug(dto.title);
+      const { slug, lockKey, lockId } = await this.generateUniqueSlug(
+        dto.title,
+        queryRunner,
+      );
 
-      // Vòng lặp tạo slug với lock để tránh race condition
-      while (true) {
-        lockSlugKey = `category:slug:${slug}`;
-        lockSlugId = await this.redisService.acquireWithRetry(
-          lockSlugKey,
-          5000,
-          3,
-          queryRunner,
-        );
+      lockSlugKey = lockKey;
+      lockSlugId = lockId;
 
-        if (!lockSlugId) {
-          throw new ConflictException(
-            'Unable to acquire lock for slug. Please try again.',
-          );
-        }
-
-        const existingCategory = await this.categoryRepo.findBySlug(slug);
-
-        if (!existingCategory) {
-          break; // slug chưa tồn tại → OK
-        }
-
-        // slug đã tồn tại → release lock và generate slug mới
-        await this.redisService.releaseLock(lockSlugKey, lockSlugId);
-        slug = `${generateSlug(dto.title)}-${generateRadomString(6)}`;
-        lockSlugId = null;
-        lockSlugKey = null;
-      }
-
-      // Lock max position để tránh race condition khi tính position
       lockMaxPositionKey = 'category:maxPosition';
       lockMaxPositionId = await this.redisService.acquireWithRetry(
         lockMaxPositionKey,
-        5000,
+        this.LOCK_TTL,
         3,
         queryRunner,
       );
@@ -117,5 +96,60 @@ export class CreateCategoryService {
         );
       await queryRunner.release();
     }
+  }
+
+  private async generateUniqueSlug(
+    title: string,
+    queryRunner: QueryRunner,
+  ): Promise<{
+    slug: string;
+    lockKey: string;
+    lockId: string;
+  }> {
+    let slug = generateSlug(title);
+    let attempt = 0;
+
+    while (attempt < this.MAX_SLUG_RETRIES) {
+      const lockKey = `category:slug:${slug}`;
+      const lockId = await this.redisService.acquireWithRetry(
+        lockKey,
+        this.LOCK_TTL,
+        3,
+        queryRunner,
+      );
+
+      if (!lockId) {
+        // Lock failed, try new slug
+        slug = `${generateSlug(title)}-${generateRadomString(6)}`;
+        attempt++;
+        continue;
+      }
+
+      try {
+        const exists = await this.categoryRepo.findBySlug(slug);
+
+        if (!exists) {
+          // Found unique slug, but don't release lock yet
+          // Caller will use this lock
+          return {
+            slug,
+            lockKey,
+            lockId,
+          };
+        }
+
+        // Slug exists, release lock and try new one
+        await this.redisService.releaseLock(lockKey, lockId);
+        slug = `${generateSlug(title)}-${generateRadomString(6)}`;
+        attempt++;
+      } catch (error) {
+        await this.redisService.releaseLock(lockKey, lockId);
+        throw error;
+      }
+    }
+
+    throw new ConflictException(
+      'Unable to generate unique slug after maximum retries',
+    );
   }
 }
