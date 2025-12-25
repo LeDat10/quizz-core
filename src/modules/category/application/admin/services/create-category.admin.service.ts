@@ -15,6 +15,8 @@ import { RedisService } from 'src/shared/infrastructure/redis/redis.service';
 import { Category } from '../../../domain/entities/category.entity';
 import { LoggerContext, LoggerHelper } from 'src/shared/common/logging';
 import { ErrorHandlerHelper } from 'src/shared/common/errors';
+import { AdminResponseCategoryDto } from '../dtos/admin-response-category.admin.dto';
+import { CategoryMapper } from '../mappers/category.mapper';
 
 @Injectable()
 export class AdminCreateCategoryService {
@@ -29,12 +31,15 @@ export class AdminCreateCategoryService {
     @Inject('CATEGORY_REPOSITORY')
     private readonly categoryRepo: CategoryRepository,
     private readonly redisService: RedisService,
+    private readonly categoryMapper: CategoryMapper,
   ) {
     this.logger = new LoggerHelper(AdminCreateCategoryService.name);
     this.errorHandler = new ErrorHandlerHelper(AdminCreateCategoryService.name);
   }
 
-  async execute(dto: AdminCreateCategoryDto): Promise<Category | undefined> {
+  async execute(
+    dto: AdminCreateCategoryDto,
+  ): Promise<AdminResponseCategoryDto | undefined> {
     const ctx: LoggerContext = {
       method: 'execute',
       entity: 'Category',
@@ -156,7 +161,7 @@ export class AdminCreateCategoryService {
         },
       );
 
-      return category;
+      return this.categoryMapper.toAdminResponseDto(category);
     } catch (error: unknown) {
       this.logger.checkpoint(traceId, 'error-occurred', ctx, {
         errorType: error instanceof Error ? error.constructor.name : 'Unknown',

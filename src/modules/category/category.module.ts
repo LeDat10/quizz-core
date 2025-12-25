@@ -5,6 +5,7 @@ import { AdminCreateCategoryService } from './application/admin/services/create-
 import { AdminCategoryController } from './presentation/admin/admin-category.admin.controller';
 import { RedisModule } from 'src/shared/infrastructure/redis/redis.module';
 import { CategoryTypeOrmRepository } from './infrastructure/repositories/category-typeorm.repository';
+import { CategoryMapper } from './application/admin/mappers/category.mapper';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Category]), RedisModule],
@@ -14,6 +15,7 @@ import { CategoryTypeOrmRepository } from './infrastructure/repositories/categor
       provide: 'CATEGORY_REPOSITORY',
       useClass: CategoryTypeOrmRepository,
     },
+    CategoryMapper,
   ],
   controllers: [AdminCategoryController],
 })
