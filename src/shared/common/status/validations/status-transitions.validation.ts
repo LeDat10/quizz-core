@@ -1,5 +1,5 @@
 import { Status } from '../enums/status.enum';
-import { ActionValidationResult } from '../interfaces/validation-result.interface';
+import { ActionValidationResult } from '../interfaces/validation.interface';
 import { STATUS_TRANSITIONS } from '../matrices/status-transitions.matrix';
 import { validateParentChildStatusConsistency } from './parent-child-status.validation';
 

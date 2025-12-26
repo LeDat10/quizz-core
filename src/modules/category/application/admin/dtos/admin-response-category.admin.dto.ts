@@ -1,4 +1,4 @@
-import { Status } from 'src/shared/enums/status.enum';
+import { Status } from 'src/shared/common/status';
 
 export class AdminResponseCategoryDto {
   id: string;

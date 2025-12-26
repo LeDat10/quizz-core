@@ -1,6 +1,6 @@
 import { Action } from '../enums/action.enum';
 import { Status } from '../enums/status.enum';
-import { ActionValidationResult } from '../interfaces/validation-result.interface';
+import { ActionValidationResult } from '../interfaces/validation.interface';
 import { ACTION_PERMISSIONS } from '../matrices/action-permissions.matrix';
 
 export const validateActionOnStatus = (

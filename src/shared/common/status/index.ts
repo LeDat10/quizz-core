@@ -1,6 +1,6 @@
 export * from './enums/action.enum';
 export * from './enums/status.enum';
-export * from './interfaces/validation-result.interface';
+export * from './interfaces/validation.interface';
 export * from './interfaces/impact.interface';
 export * from './rules/update.rule';
 export * from './rules/delete.rule';

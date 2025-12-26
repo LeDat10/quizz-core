@@ -1,6 +1,6 @@
 import { Action } from '../enums/action.enum';
 import { Status } from '../enums/status.enum';
-import { ActionValidationResult } from '../interfaces/validation-result.interface';
+import { ActionValidationResult } from '../interfaces/validation.interface';
 import { DELETE_RULES } from '../rules/delete.rule';
 import { RESTORE_RULES } from '../rules/restore.rule';
 import { UPDATE_RULES } from '../rules/update.rule';

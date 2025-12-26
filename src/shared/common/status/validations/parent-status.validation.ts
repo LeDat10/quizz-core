@@ -1,5 +1,5 @@
 import { Status } from '../enums/status.enum';
-import { ActionValidationResult } from '../interfaces/validation-result.interface';
+import { ActionValidationResult } from '../interfaces/validation.interface';
 import { PARENT_STATUS_CHANGE_RULES } from '../rules/parent-change.rules';
 
 export const validateParentStatusChange = (

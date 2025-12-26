@@ -1,5 +1,5 @@
 import { Status } from '../enums/status.enum';
-import { ActionValidationResult } from '../interfaces/validation-result.interface';
+import { ActionValidationResult } from '../interfaces/validation.interface';
 
 export const validateParentChildStatusConsistency = (
   parentStatus: Status,
