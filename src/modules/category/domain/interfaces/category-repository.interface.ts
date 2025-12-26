@@ -10,4 +10,10 @@ export interface CategoryRepository {
   ): Promise<Category | null>;
   save(category: Category): Promise<Category>;
   maxPosition(): Promise<number>;
+  findByPosition(position: number): Promise<Category | null>;
+  swapPositions(
+    categoryA: Category,
+    categoryB: Category,
+    queryRunner: QueryRunner,
+  ): Promise<{ categoryA: Category; categoryB: Category }>;
 }

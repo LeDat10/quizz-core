@@ -6,16 +6,22 @@ import { AdminCategoryController } from './presentation/admin/admin-category.adm
 import { RedisModule } from 'src/shared/infrastructure/redis/redis.module';
 import { CategoryTypeOrmRepository } from './infrastructure/repositories/category-typeorm.repository';
 import { CategoryMapper } from './application/admin/mappers/category.mapper';
+import { SlugService } from 'src/shared/common/slugs/slug.service';
+import { UpdateCategoryAdminService } from './application/admin/services/update-category.admin.service';
+import { StatusValidationService } from 'src/shared/common/status/services/status-validation.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Category]), RedisModule],
   providers: [
     AdminCreateCategoryService,
+    UpdateCategoryAdminService,
+    StatusValidationService,
     {
       provide: 'CATEGORY_REPOSITORY',
       useClass: CategoryTypeOrmRepository,
     },
     CategoryMapper,
+    SlugService,
   ],
   controllers: [AdminCategoryController],
 })

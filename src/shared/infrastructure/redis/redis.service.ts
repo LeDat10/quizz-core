@@ -299,7 +299,46 @@ export class RedisService implements OnModuleInit {
     return null;
   }
 
+  async acquireRedisLockWithRetry(
+    key: string,
+    ttlMs: number = 3000,
+    maxRetries: number = 3,
+  ): Promise<string | null> {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const lockId = await this.acquireRedisLock(key, ttlMs);
+        if (lockId) {
+          this.logger.log(
+            `Redis lock acquired on attempt ${i + 1}/${maxRetries}: ${key}`,
+          );
+          return lockId;
+        }
+
+        // Lock conflict
+        this.logger.debug(
+          `Redis lock conflict on attempt ${i + 1}/${maxRetries}: ${key}`,
+        );
+      } catch (error) {
+        const errorMessage = this.getErrorMessage(error);
+        this.logger.warn(
+          `Redis lock attempt ${i + 1}/${maxRetries} failed for ${key}: ${errorMessage}`,
+        );
+      }
+    }
+    return null;
+  }
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async isLocked(key: string): Promise<boolean> {
+    const lockKey = `lock:${key}`;
+    const value = await this.redisClient.get(lockKey);
+    return value !== null;
+  }
+
+  async getLockOwner(key: string): Promise<string | null> {
+    const lockKey = `lock:${key}`;
+    return this.redisClient.get(lockKey);
   }
 }
