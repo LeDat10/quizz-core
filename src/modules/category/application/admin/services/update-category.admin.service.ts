@@ -15,6 +15,8 @@ import { RedisService } from 'src/shared/infrastructure/redis/redis.service';
 import { CategoryMapper } from '../mappers/category.mapper';
 import { StatusValidationService } from 'src/shared/common/status/services/status-validation.service';
 import { Category } from 'src/modules/category/domain/entities/category.entity';
+import { BaseResponseDto, ResponseFactory } from 'src/shared/common/http';
+import { generateMessage } from 'src/shared/common/messaging';
 
 @Injectable()
 export class UpdateCategoryAdminService {
@@ -44,7 +46,7 @@ export class UpdateCategoryAdminService {
   async excute(
     id: string,
     dto: AdminUpdateCategoryDto,
-  ): Promise<AdminResponseCategoryDto> {
+  ): Promise<BaseResponseDto<AdminResponseCategoryDto>> {
     const ctx: LoggerContext = {
       method: 'execute',
       entity: 'Category',
@@ -90,7 +92,6 @@ export class UpdateCategoryAdminService {
       }
 
       let prepareCategory = category;
-      let slugUpdate: string = category.slug;
 
       if (dto.status) {
         this.statusValidationService.validateTransition<Category>(
@@ -197,7 +198,7 @@ export class UpdateCategoryAdminService {
           slug,
         });
 
-        slugUpdate = slug;
+        prepareCategory.slug = slug;
       }
 
       const categoryMapped = this.categoryMapper.fromUpdateDto(
@@ -205,9 +206,7 @@ export class UpdateCategoryAdminService {
         dto,
       );
 
-      categoryMapped.slug = slugUpdate;
-
-      const updatedCategory = await queryRunner.manager.save(categoryMapped);
+      await queryRunner.manager.save(categoryMapped);
 
       await queryRunner.commitTransaction();
 
@@ -225,7 +224,10 @@ export class UpdateCategoryAdminService {
         },
       );
 
-      return this.categoryMapper.toAdminResponseDto(updatedCategory);
+      return ResponseFactory.success<AdminResponseCategoryDto>(
+        this.categoryMapper.toAdminResponseDto(prepareCategory),
+        generateMessage('updated', this.ENTITY_NAME, prepareCategory.id),
+      );
     } catch (error) {
       this.logger.checkpoint(traceId, 'error-occurred', ctx, {
         errorType: error instanceof Error ? error.constructor.name : 'Unknown',
