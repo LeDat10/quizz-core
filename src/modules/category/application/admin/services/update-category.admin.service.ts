@@ -17,6 +17,8 @@ import { StatusValidationService } from 'src/shared/common/status/services/statu
 import { Category } from 'src/modules/category/domain/entities/category.entity';
 import { BaseResponseDto, ResponseFactory } from 'src/shared/common/http';
 import { generateMessage } from 'src/shared/common/messaging';
+import { StatusCascadeQueue } from 'src/shared/infrastructure/queues';
+import { Status } from 'src/shared/common/status';
 
 @Injectable()
 export class UpdateCategoryAdminService {
@@ -36,6 +38,9 @@ export class UpdateCategoryAdminService {
     private readonly redisService: RedisService,
     private readonly statusValidationService: StatusValidationService,
 
+    // queue
+    private readonly statusCascadeQueue: StatusCascadeQueue,
+
     // helpers
     private readonly categoryMapper: CategoryMapper,
   ) {
@@ -51,6 +56,9 @@ export class UpdateCategoryAdminService {
       method: 'execute',
       entity: 'Category',
     };
+
+    let shouldCascade = false;
+    let newStatus: Status | undefined;
 
     const traceId = this.logger.start(ctx, {
       operation: 'updateCategory',
@@ -92,22 +100,6 @@ export class UpdateCategoryAdminService {
       }
 
       let prepareCategory = category;
-
-      if (dto.status) {
-        this.statusValidationService.validateTransition<Category>(
-          prepareCategory,
-          dto.status,
-          { entityName: 'Category' },
-        );
-
-        this.statusValidationService.validateWithChildren<Category>(
-          prepareCategory,
-          dto.status,
-          {
-            entityName: this.ENTITY_NAME,
-          },
-        );
-      }
 
       if (dto.position) {
         // Acquire position lock
@@ -201,6 +193,25 @@ export class UpdateCategoryAdminService {
         prepareCategory.slug = slug;
       }
 
+      if (dto.status) {
+        this.statusValidationService.validateTransition<Category>(
+          prepareCategory,
+          dto.status,
+          { entityName: 'Category' },
+        );
+
+        this.statusValidationService.validateWithChildren<Category>(
+          prepareCategory,
+          dto.status,
+          {
+            entityName: this.ENTITY_NAME,
+          },
+        );
+
+        newStatus = dto.status;
+        shouldCascade = true;
+      }
+
       const categoryMapped = this.categoryMapper.fromUpdateDto(
         prepareCategory,
         dto,
@@ -211,6 +222,25 @@ export class UpdateCategoryAdminService {
       await queryRunner.commitTransaction();
 
       this.logger.checkpoint(traceId, 'transaction-committed', ctx);
+
+      if (shouldCascade && newStatus) {
+        try {
+          await this.statusCascadeQueue.addSingleCascadeJob(
+            'category',
+            category.id,
+            newStatus,
+            '1',
+          );
+
+          this.logger.checkpoint(traceId, 'add-single-cascade-job', ctx);
+        } catch (queueError) {
+          // Log error nhưng KHÔNG rollback transaction
+          this.logger.fail(
+            ctx,
+            `Failed to queue cascade: ${(queueError as Error).message}`,
+          );
+        }
+      }
 
       this.logger.success(
         {
