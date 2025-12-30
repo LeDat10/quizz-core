@@ -9,7 +9,7 @@ import { CategoryMapper } from './application/admin/mappers/category.mapper';
 import { SlugService } from 'src/shared/common/slugs/slug.service';
 import { UpdateCategoryAdminService } from './application/admin/services/update-category.admin.service';
 import { StatusValidationService } from 'src/shared/common/status/services/status-validation.service';
-import { StatusCascadeModule } from 'src/shared/infrastructure/queues/status-cascade.module';
+import { StatusCascadeModule } from 'src/modules/status-cascade/status-cascade.module';
 
 @Module({
   imports: [

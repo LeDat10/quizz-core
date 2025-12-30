@@ -9,8 +9,8 @@ import { PemService } from './shared/infrastructure/aws/pem.service';
 import { Category } from './modules/category/domain/entities/category.entity';
 import { RedisModule } from './shared/infrastructure/redis/redis.module';
 import { CategoryModule } from './modules/category/category.module';
-import { BullModule } from '@nestjs/bull';
-import { StatusCascadeModule } from './shared/infrastructure/queues/status-cascade.module';
+import { StatusCascadeModule } from './modules/status-cascade/status-cascade.module';
+import { QueueInfrastructureModule } from './shared/infrastructure/queues/queue.module';
 
 const ENV = process.env.NODE_ENV;
 
@@ -48,18 +48,7 @@ const ENV = process.env.NODE_ENV;
         };
       },
     }),
-    BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        redis: {
-          host: configService.get<string>('redis.redisHost'),
-          port: configService.get<number>('redis.redisPort'),
-          password:
-            configService.get<string>('redis.redisPassword') || undefined,
-          db: configService.get<number>('redis.redisDB') || 0,
-        },
-      }),
-    }),
+    QueueInfrastructureModule,
     StatusCascadeModule,
     RedisModule,
     CategoryModule,

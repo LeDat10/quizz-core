@@ -1,26 +1,27 @@
-import { Process, Processor } from '@nestjs/bull';
-import { STATUS_CASCADE_QUEUE } from './status-cascade.constant';
+import { OnQueueFailed, Process, Processor } from '@nestjs/bull';
+import { QUEUE_CONSTANTS } from '../../../../../shared/infrastructure/queues/constants/queue.constant';
 import { LoggerContext, LoggerHelper } from 'src/shared/common/logging';
 import { DataSource, EntityManager, In, QueryRunner } from 'typeorm';
+import { StatusCascadeQueueService } from '../services/status-cascade-queue.service';
+import { StatusCascadeBatchJob } from 'src/modules/status-cascade/domain/interfaces/cascade-job.interface';
 import { Job } from 'bull';
+import { Status, StatusImpactEngine } from 'src/shared/common/status';
+import { EntityHierarchyConfig } from 'src/modules/status-cascade/domain/interfaces/entity-config.interface';
 import {
   BatchCascadeResult,
-  EntityHierarchyConfig,
   SingleCascadeResult,
-  StatusCascadeBatchJob,
-} from './status-cascade.interface';
-import { Status, StatusImpactEngine } from 'src/shared/common/status';
-import { getEntityConfig } from './status-cascade.helper';
+} from '../../../../../shared/infrastructure/queues/interfaces/queue-job.interface';
+import { getEntityConfig } from 'src/modules/status-cascade/domain/helpers/entity-config.helper';
 
-@Processor(STATUS_CASCADE_QUEUE)
-export class StatusCascadeProcessor {
-  private readonly logger = new LoggerHelper(StatusCascadeProcessor.name);
+@Processor(QUEUE_CONSTANTS.NAMES.STATUS_CASCADE)
+export class BatchCascadeProcessor {
+  private readonly logger = new LoggerHelper(BatchCascadeProcessor.name);
 
-  constructor(private readonly connection: DataSource) {}
+  constructor(
+    private readonly connection: DataSource,
+    private readonly queueService: StatusCascadeQueueService,
+  ) {}
 
-  /**
-   * Xử lý BATCH cascade - Xử lý nhiều updates trong 1 transaction
-   */
   @Process('cascade-batch')
   async handleBatchCascade(
     job: Job<StatusCascadeBatchJob>,
@@ -66,7 +67,7 @@ export class StatusCascadeProcessor {
             error: errorMessage,
           });
 
-          // Nếu là lỗi critical (không thể retry), throw ngay
+          // If critical error (can't retry), throw immediately
           if (this.isCriticalError(error as Error)) {
             throw error;
           }
@@ -89,8 +90,8 @@ export class StatusCascadeProcessor {
     });
   }
 
-  /**
-   * Check if error is critical (không nên retry)
+  /*
+   * Check if error is critical (should not retry)
    */
   private isCriticalError(error: Error): boolean {
     const criticalErrors = [
@@ -102,9 +103,13 @@ export class StatusCascadeProcessor {
     return criticalErrors.some((msg) => error.message.includes(msg));
   }
 
-  /**
-   * Generic cascade method
-   */
+  @OnQueueFailed()
+  async handleFailedJob(job: Job<StatusCascadeBatchJob>, error: Error) {
+    if (job.attemptsMade >= (job.opts.attempts ?? 1)) {
+      await this.queueService.moveToDeadLetterQueue(job.data, error.message);
+    }
+  }
+
   private async cascadeEntity(
     manager: EntityManager,
     entityType: string,
@@ -112,36 +117,22 @@ export class StatusCascadeProcessor {
     newStatus: Status,
   ): Promise<SingleCascadeResult> {
     const config = getEntityConfig(entityType);
+    if (!config) throw new Error(`Unknown entity type: ${entityType}`);
 
-    if (!config) {
-      throw new Error(`Unknown entity type: ${entityType}`);
-    }
-
-    const relations = config.childrenRelation ? [config.childrenRelation] : [];
     const entity = await manager.findOne(config.entityTarget, {
       where: { id: entityId },
-      relations,
+      relations: config.childrenRelation ? [config.childrenRelation] : [],
     });
 
-    if (!entity) {
-      throw new Error(`${config.entityTarget} ${entityId} not found`);
-    }
+    if (!entity) throw new Error(`${entityType} ${entityId} not found`);
 
-    if (!config.childrenRelation || !config.childEntityName) {
+    if (!config.childrenRelation) {
       await manager.update(
         config.entityTarget,
         { id: entityId },
-        {
-          status: newStatus,
-        },
+        { status: newStatus },
       );
-
-      return {
-        entityType,
-        entityId,
-        totalUpdated: 1,
-        affectedIds: [entityId],
-      };
+      return { entityType, entityId, totalUpdated: 1, affectedIds: [entityId] };
     }
 
     const cascadeLevels = await this.buildCascadeLevels(
@@ -149,7 +140,6 @@ export class StatusCascadeProcessor {
       entity,
       config,
     );
-
     const result = await StatusImpactEngine.autoFixChildrenMultiLevel(
       manager.queryRunner as QueryRunner,
       newStatus,
@@ -167,7 +157,8 @@ export class StatusCascadeProcessor {
   }
 
   /**
-   * Build cascade levels
+   * Build cascade levels for entire hierarchy
+   * Goes as deep as possible: category > course > chapter > lesson
    */
   private async buildCascadeLevels(
     manager: EntityManager,
@@ -175,15 +166,16 @@ export class StatusCascadeProcessor {
     parentConfig: EntityHierarchyConfig,
   ): Promise<
     Array<{
-      entityTarget: string;
+      entityTarget: any;
       children: Array<Record<string, any>>;
     }>
   > {
     const levels: Array<{
-      entityTarget: string;
+      entityTarget: any;
       children: Array<Record<string, any>>;
     }> = [];
 
+    // Level 1: Direct children
     const directChildren = (parentEntity[parentConfig.childrenRelation!] ||
       []) as Array<Record<string, any>>;
 
@@ -201,10 +193,9 @@ export class StatusCascadeProcessor {
       children: directChildren,
     });
 
+    // Level 2: Grandchildren
     if (childConfig.childrenRelation && childConfig.childEntityName) {
-      const childIds = directChildren.map(
-        (c: Record<string, any>) => c.id as string,
-      );
+      const childIds = directChildren.map((c) => c.id as string);
       const grandchildConfig = getEntityConfig(childConfig.childEntityName);
 
       if (!grandchildConfig) {
@@ -213,9 +204,9 @@ export class StatusCascadeProcessor {
 
       const grandchildren =
         childIds.length > 0
-          ? ((await manager.find(grandchildConfig.entityTarget, {
+          ? await manager.find(grandchildConfig.entityTarget, {
               where: { [childConfig.childrenRelation]: In(childIds) },
-            })) as Array<Record<string, any>>)
+            })
           : [];
 
       if (grandchildren.length > 0) {
@@ -224,13 +215,12 @@ export class StatusCascadeProcessor {
           children: grandchildren,
         });
 
+        // Level 3: Great-grandchildren
         if (
           grandchildConfig.childrenRelation &&
           grandchildConfig.childEntityName
         ) {
-          const grandchildIds = grandchildren.map(
-            (gc: Record<string, any>) => gc.id as string,
-          );
+          const grandchildIds = grandchildren.map((gc) => gc.id as string);
           const greatGrandchildConfig = getEntityConfig(
             grandchildConfig.childEntityName,
           );
@@ -238,11 +228,11 @@ export class StatusCascadeProcessor {
           if (greatGrandchildConfig) {
             const greatGrandchildren =
               grandchildIds.length > 0
-                ? ((await manager.find(greatGrandchildConfig.entityTarget, {
+                ? await manager.find(greatGrandchildConfig.entityTarget, {
                     where: {
                       [grandchildConfig.childrenRelation]: In(grandchildIds),
                     },
-                  })) as Array<Record<string, any>>)
+                  })
                 : [];
 
             if (greatGrandchildren.length > 0) {
