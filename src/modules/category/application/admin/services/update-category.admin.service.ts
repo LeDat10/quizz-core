@@ -17,8 +17,8 @@ import { StatusValidationService } from 'src/shared/common/status/services/statu
 import { Category } from 'src/modules/category/domain/entities/category.entity';
 import { BaseResponseDto, ResponseFactory } from 'src/shared/common/http';
 import { generateMessage } from 'src/shared/common/messaging';
-import { StatusCascadeQueue } from 'src/shared/infrastructure/queues';
 import { Status } from 'src/shared/common/status';
+import { StatusCascadeService } from 'src/modules/status-cascade/application/services/status-cascade.service';
 
 @Injectable()
 export class UpdateCategoryAdminService {
@@ -39,7 +39,7 @@ export class UpdateCategoryAdminService {
     private readonly statusValidationService: StatusValidationService,
 
     // queue
-    private readonly statusCascadeQueue: StatusCascadeQueue,
+    private readonly statusCascadeService: StatusCascadeService,
 
     // helpers
     private readonly categoryMapper: CategoryMapper,
@@ -225,10 +225,12 @@ export class UpdateCategoryAdminService {
 
       if (shouldCascade && newStatus) {
         try {
-          await this.statusCascadeQueue.addSingleCascadeJob(
-            'category',
-            category.id,
-            newStatus,
+          await this.statusCascadeService.startCascade(
+            {
+              entityType: 'category',
+              entityId: category.id,
+              newStatus: newStatus,
+            },
             '1',
           );
 
