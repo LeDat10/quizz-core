@@ -91,6 +91,8 @@ export class UpdateCategoryAdminService {
     let lockSlugKey: string | null = null;
     let lockPositionId: string | null = null;
     let lockPositionKey: string | null = null;
+    const lockStatusKey: string = 'lock:cascade-status';
+    let lockStatusId: string | null = null;
     try {
       const category = await this.categoryRepository.findById(id);
       if (!category) {
@@ -208,6 +210,12 @@ export class UpdateCategoryAdminService {
           },
         );
 
+        lockStatusId = await this.redisService.acquireRedisLockWithRetry(
+          lockStatusKey,
+          this.LOCK_TTL,
+          this.MAX_RETRIES,
+        );
+
         newStatus = dto.status;
         shouldCascade = true;
       }
@@ -291,6 +299,15 @@ export class UpdateCategoryAdminService {
         this.logger.debug(ctx, 'processing', 'Position lock released', {
           traceId,
           lockKey: lockPositionKey,
+        });
+      }
+
+      if (lockStatusId && lockStatusKey) {
+        await this.redisService.releaseLock(lockStatusKey, lockStatusId);
+
+        this.logger.debug(ctx, 'processing', 'Position lock released', {
+          traceId,
+          lockKey: lockStatusKey,
         });
       }
 
