@@ -2,11 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { LoggerHelper } from 'src/shared/common/logging';
 import { StatusCascadeQueueService } from './status-cascade-queue.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { DLQManagementService } from './dlq-management.service';
 
 @Injectable()
 export class QueueCleanupJobService {
   private readonly logger = new LoggerHelper(QueueCleanupJobService.name);
-  constructor(private readonly cascadeQueue: StatusCascadeQueueService) {}
+  constructor(
+    private readonly cascadeQueue: StatusCascadeQueueService,
+    private readonly dlq: DLQManagementService,
+  ) {}
 
   /**
    * Clean up completed jobs every hour
@@ -97,4 +101,19 @@ export class QueueCleanupJobService {
       this.logger.error(ctx, error as Error, 'failed');
     }
   }
+
+  // @Cron(CronExpression.)
+  // async cleanUpOldDLQ() {
+  //   const ctx = { method: 'cleanUpOldDLQ', entity: '' };
+
+  //   try {
+  //     this.logger.start(ctx);
+  //     const result = await this.dlq.cleanupDLQ(30);
+  //     this.logger.info(ctx, 'completed', undefined, {
+  //       totalCleaned: result,
+  //     });
+  //   } catch (error) {
+  //     this.logger.error(ctx, error as Error, 'failed');
+  //   }
+  // }
 }

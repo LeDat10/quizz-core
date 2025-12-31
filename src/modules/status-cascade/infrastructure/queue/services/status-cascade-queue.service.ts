@@ -8,6 +8,7 @@ import {
   getMaxCascadeLevels,
 } from 'src/modules/status-cascade/domain/helpers/entity-config.helper';
 import {
+  CancelBatchCascade,
   StatusCascadeBatchJob,
   StatusCascadeLevelJob,
 } from 'src/modules/status-cascade/domain/interfaces/cascade-job.interface';
@@ -27,7 +28,7 @@ export class StatusCascadeQueueService {
     private levelQueue: Queue<StatusCascadeLevelJob>,
 
     @InjectQueue(QUEUE_CONSTANTS.NAMES.STATUS_CASCADE_DLQ)
-    private dlq: Queue<StatusCascadeBatchJob>,
+    private dlq: Queue<StatusCascadeBatchJob | StatusCascadeLevelJob>,
   ) {}
 
   async startLevelBasedCascade(
@@ -201,7 +202,7 @@ export class StatusCascadeQueueService {
   }
 
   async moveToDeadLetterQueue(
-    job: StatusCascadeBatchJob,
+    job: StatusCascadeBatchJob | StatusCascadeLevelJob,
     failureReason: string,
   ): Promise<void> {
     await this.dlq.add(
@@ -213,27 +214,49 @@ export class StatusCascadeQueueService {
     );
   }
 
-  async cancelBatchCascade(batchId: string) {
-    const levelJobs = await this.getLevelJobs(batchId);
+  async cancelBatchCascade(batchId: string): Promise<CancelBatchCascade> {
+    const result = {
+      batchJob: { cancelled: false, reason: '' },
+      levelJobs: {
+        cancelled: 0,
+        alreadyCompleted: 0,
+        alreadyActive: 0,
+      },
+    };
 
-    let cancelled = 0;
-    let alreadyCompleted = 0;
-    let alreadyActive = 0;
+    // 1. Try to cancel the batch job itself
+    const batchJob = await this.batchQueue.getJob(batchId);
+    if (batchJob) {
+      const state = await batchJob.getState();
+      if (state === 'waiting' || state === 'delayed') {
+        await batchJob.remove();
+        result.batchJob.cancelled = true;
+        result.batchJob.reason = 'Batch job cancelled';
+      } else {
+        result.batchJob.reason = `Cannot cancel batch job (state: ${state})`;
+      }
+    } else {
+      result.batchJob.reason =
+        'Batch job not found (may be using level approach)';
+    }
+
+    // 2. Cancel all level jobs associated with this batch
+    const levelJobs = await this.getLevelJobs(batchId);
 
     for (const job of levelJobs) {
       const state = await job.getState();
 
       if (state === 'completed') {
-        alreadyCompleted++;
+        result.levelJobs.alreadyCompleted++;
       } else if (state === 'active') {
-        alreadyActive++;
+        result.levelJobs.alreadyActive++;
       } else if (state === 'waiting' || state === 'delayed') {
         await job.remove();
-        cancelled++;
+        result.levelJobs.cancelled++;
       }
     }
 
-    return { cancelled, alreadyCompleted, alreadyActive };
+    return result;
   }
 
   async getQueueMetrics() {

@@ -107,6 +107,7 @@ export class BatchCascadeProcessor {
   async handleFailedJob(job: Job<StatusCascadeBatchJob>, error: Error) {
     if (job.attemptsMade >= (job.opts.attempts ?? 1)) {
       await this.queueService.moveToDeadLetterQueue(job.data, error.message);
+      await job.remove();
     }
   }
 

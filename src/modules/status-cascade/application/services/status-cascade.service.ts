@@ -3,6 +3,7 @@ import { StatusCascadeQueueService } from '../../infrastructure/queue/services/s
 import { BulkCascadeDto, StartCascadeDto } from '../dtos/start-cascade.dto';
 import { getMaxCascadeLevels } from '../../domain/helpers/entity-config.helper';
 import { CascadeProgressDto } from '../dtos/cascade-progress.dto';
+import { CancelBatchCascade } from '../../domain/interfaces/cascade-job.interface';
 
 @Injectable()
 export class StatusCascadeService {
@@ -89,10 +90,7 @@ export class StatusCascadeService {
   /**
    * Use Case: Cancel ongoing cascade
    */
-  async cancelCascade(batchId: string): Promise<{
-    cancelled: number;
-    alreadyCompleted: number;
-  }> {
+  async cancelCascade(batchId: string): Promise<CancelBatchCascade> {
     return this.queueService.cancelBatchCascade(batchId);
   }
 }

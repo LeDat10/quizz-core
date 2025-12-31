@@ -1,9 +1,17 @@
 import { InjectQueue } from '@nestjs/bull';
 import { Injectable } from '@nestjs/common';
 import { Queue } from 'bull';
-import { StatusCascadeBatchJob } from 'src/modules/status-cascade/domain/interfaces/cascade-job.interface';
+import {
+  isBatchJob,
+  isLevelJob,
+} from 'src/modules/status-cascade/domain/helpers/validate-job.helper';
+import {
+  StatusCascadeBatchJob,
+  StatusCascadeLevelJob,
+} from 'src/modules/status-cascade/domain/interfaces/cascade-job.interface';
 import { LoggerHelper } from 'src/shared/common/logging';
 import { QUEUE_CONSTANTS } from 'src/shared/infrastructure/queues/constants/queue.constant';
+import { StatusCascadeDLQJob } from 'src/shared/infrastructure/queues/types/queue.types';
 
 @Injectable()
 export class DLQManagementService {
@@ -11,10 +19,13 @@ export class DLQManagementService {
 
   constructor(
     @InjectQueue(QUEUE_CONSTANTS.NAMES.STATUS_CASCADE_DLQ)
-    private readonly dlq: Queue<StatusCascadeBatchJob>,
+    private readonly dlq: Queue<StatusCascadeDLQJob>,
 
     @InjectQueue(QUEUE_CONSTANTS.NAMES.STATUS_CASCADE)
     private batchQueue: Queue<StatusCascadeBatchJob>,
+
+    @InjectQueue(QUEUE_CONSTANTS.NAMES.STATUS_CASCADE_LEVEL)
+    private levelQueue: Queue<StatusCascadeLevelJob>,
   ) {}
 
   /**
@@ -25,17 +36,27 @@ export class DLQManagementService {
     offset?: number;
     sortBy?: 'timestamp' | 'retryCount';
     order?: 'asc' | 'desc';
+    jobType?: 'batch' | 'level' | 'all'; // ✅ NEW: Filter by type
   }) {
     const jobs = await this.dlq.getJobs(['completed', 'failed', 'waiting']);
 
+    // Filter by job type if specified
+    const filteredJobs =
+      options?.jobType && options.jobType !== 'all'
+        ? jobs.filter((job) => {
+            if (options.jobType === 'batch') return isBatchJob(job.data);
+            if (options.jobType === 'level') return isLevelJob(job.data);
+            return true;
+          })
+        : jobs;
+
     // Sort jobs
-    const sorted = jobs.sort((a, b) => {
+    const sorted = filteredJobs.sort((a, b) => {
       if (options?.sortBy === 'retryCount') {
         return options?.order === 'desc'
           ? b.data.retryCount - a.data.retryCount
           : a.data.retryCount - b.data.retryCount;
       }
-      // Default: sort by timestamp
       return options?.order === 'desc'
         ? b.timestamp - a.timestamp
         : a.timestamp - b.timestamp;
@@ -47,15 +68,35 @@ export class DLQManagementService {
     const paginated = sorted.slice(offset, offset + limit);
 
     return {
-      jobs: paginated.map((job) => ({
-        id: job.id?.toString() ?? 'unknown',
-        batchId: job.data.batchId,
-        failureReason: job.data.failureReason,
-        retryCount: job.data.retryCount,
-        triggeredAt: job.data.triggeredAt,
-        failedAt: new Date(job.timestamp),
-        updates: job.data.updates,
-      })),
+      jobs: paginated.map((job) => {
+        const baseInfo = {
+          id: job.id?.toString() ?? 'unknown',
+          batchId: job.data.batchId,
+          failureReason: job.data.failureReason,
+          retryCount: job.data.retryCount,
+          triggeredAt: job.data.triggeredAt,
+          failedAt: new Date(job.timestamp),
+        };
+
+        if (isBatchJob(job.data)) {
+          return {
+            ...baseInfo,
+            jobType: 'batch' as const,
+            updates: job.data.updates,
+            entitiesCount: job.data.updates.length,
+          };
+        } else {
+          return {
+            ...baseInfo,
+            jobType: 'level' as const,
+            level: job.data.level,
+            entityType: job.data.entityType,
+            entityId: job.data.entityId,
+            newStatus: job.data.newStatus,
+            parentJobId: job.data.parentJobId,
+          };
+        }
+      }),
       total: sorted.length,
       offset,
       limit,
@@ -76,17 +117,42 @@ export class DLQManagementService {
     jobData.retryCount = 0;
     delete jobData.failureReason;
 
-    const newBatchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    jobData.batchId = newBatchId;
+    let newJobId: string;
 
-    await this.batchQueue.add('cascade-batch', jobData, {
-      jobId: newBatchId,
-      attempts: QUEUE_CONSTANTS.DEFAULT_JOB_OPTIONS.ATTEMPTS,
-      backoff: {
-        type: 'exponential',
-        delay: QUEUE_CONSTANTS.DEFAULT_JOB_OPTIONS.BACKOFF_DELAY,
-      },
-    });
+    // FIXED: Different retry logic based on job type
+    if (isBatchJob(jobData)) {
+      // Batch job: Create new batch
+      const newBatchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      jobData.batchId = newBatchId;
+
+      await this.batchQueue.add('cascade-batch', jobData, {
+        jobId: newBatchId,
+        attempts: QUEUE_CONSTANTS.DEFAULT_JOB_OPTIONS.ATTEMPTS,
+        backoff: {
+          type: 'exponential',
+          delay: QUEUE_CONSTANTS.DEFAULT_JOB_OPTIONS.BACKOFF_DELAY,
+        },
+      });
+
+      newJobId = newBatchId;
+
+      // await this.
+    } else {
+      // Level job: Create new level job
+      const newLevelJobId = `${jobData.batchId}-L${jobData.level}-${jobData.entityType}-${jobData.entityId}-retry`;
+
+      await this.levelQueue.add('cascade-level', jobData, {
+        jobId: newLevelJobId,
+        priority: jobData.level,
+        attempts: QUEUE_CONSTANTS.DEFAULT_JOB_OPTIONS.ATTEMPTS,
+        backoff: {
+          type: 'exponential',
+          delay: QUEUE_CONSTANTS.DEFAULT_JOB_OPTIONS.BACKOFF_DELAY,
+        },
+      });
+
+      newJobId = newLevelJobId;
+    }
 
     await dlqJob.remove();
 
@@ -96,11 +162,12 @@ export class DLQManagementService {
       undefined,
       {
         oldJobId: dlqJobId,
-        newBatchId,
+        newJobId,
+        jobType: isBatchJob(jobData) ? 'batch' : 'level',
       },
     );
 
-    return newBatchId;
+    return newJobId;
   }
 
   /**

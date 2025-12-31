@@ -32,3 +32,12 @@ export interface CascadeResult {
     updatedCount: number;
   }>;
 }
+
+export interface CancelBatchCascade {
+  batchJob: { cancelled: boolean; reason: string };
+  levelJobs: {
+    cancelled: number;
+    alreadyCompleted: number;
+    alreadyActive: number;
+  };
+}

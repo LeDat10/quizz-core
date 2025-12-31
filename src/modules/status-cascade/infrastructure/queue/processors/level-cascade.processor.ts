@@ -1,4 +1,4 @@
-import { InjectQueue, Process, Processor } from '@nestjs/bull';
+import { InjectQueue, OnQueueFailed, Process, Processor } from '@nestjs/bull';
 import { QUEUE_CONSTANTS } from '../../../../../shared/infrastructure/queues/constants/queue.constant';
 import { LoggerContext, LoggerHelper } from 'src/shared/common/logging';
 import { DataSource } from 'typeorm';
@@ -8,6 +8,7 @@ import { getEntityConfig } from 'src/modules/status-cascade/domain/helpers/entit
 import { NotFoundException } from '@nestjs/common';
 import { Status, StatusImpactEngine } from 'src/shared/common/status';
 import { LevelCascadeResult } from '../../../../../shared/infrastructure/queues/interfaces/queue-job.interface';
+import { StatusCascadeQueueService } from '../services/status-cascade-queue.service';
 
 @Processor(QUEUE_CONSTANTS.NAMES.STATUS_CASCADE_LEVEL)
 export class LevelCascadeProcessor {
@@ -17,6 +18,8 @@ export class LevelCascadeProcessor {
     private readonly connection: DataSource,
     @InjectQueue(QUEUE_CONSTANTS.NAMES.STATUS_CASCADE_LEVEL)
     private levelQueue: Queue<StatusCascadeLevelJob>,
+
+    private readonly cascadeQueue: StatusCascadeQueueService,
   ) {}
 
   /**
@@ -241,5 +244,13 @@ export class LevelCascadeProcessor {
       chunks.push(array.slice(i, i + size));
     }
     return chunks;
+  }
+
+  @OnQueueFailed()
+  async handleFailedJob(job: Job<StatusCascadeLevelJob>, error: Error) {
+    if (job.attemptsMade >= (job.opts.attempts ?? 1)) {
+      await this.cascadeQueue.moveToDeadLetterQueue(job.data, error.message);
+      await job.remove();
+    }
   }
 }
