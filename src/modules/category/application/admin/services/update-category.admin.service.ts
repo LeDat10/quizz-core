@@ -48,7 +48,7 @@ export class UpdateCategoryAdminService {
     this.errorHandler = new ErrorHandlerHelper(UpdateCategoryAdminService.name);
   }
 
-  async excute(
+  async execute(
     id: string,
     dto: AdminUpdateCategoryDto,
   ): Promise<BaseResponseDto<AdminResponseCategoryDto>> {
@@ -72,7 +72,7 @@ export class UpdateCategoryAdminService {
         throw new HttpException(reason, 400);
       }
     } catch (error) {
-      this.errorHandler.handle(ctx, error, this.ENTITY_NAME);
+      return this.errorHandler.handle(ctx, error, this.ENTITY_NAME);
     }
 
     this.logger.info(ctx, 'processing', 'Validating category data', {

@@ -27,6 +27,6 @@ export class AdminCategoryController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AdminCreateCategoryDto,
   ) {
-    return await this.updateCategoryService.excute(id, dto);
+    return await this.updateCategoryService.execute(id, dto);
   }
 }
