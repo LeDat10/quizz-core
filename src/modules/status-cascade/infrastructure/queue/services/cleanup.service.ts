@@ -47,7 +47,7 @@ export class QueueCleanupJobService {
       this.logger.info(ctx, 'completed', undefined, {
         batchQueueCleaned: result.batchQueue,
         levelQueueCleaned: result.levelQueue,
-        dlqCleaned: result.dlq,
+        // dlqCleaned: result.dlq,
         totalCleaned: result.total,
       });
     } catch (error) {

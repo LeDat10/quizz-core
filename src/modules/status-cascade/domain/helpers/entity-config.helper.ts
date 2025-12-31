@@ -1,4 +1,4 @@
-import { entityType } from 'src/shared/infrastructure/queues/domain/types/status-cascade.types';
+import { entityType } from 'src/shared/infrastructure/queues/types/queue.types';
 import { EntityHierarchyConfig } from '../interfaces/entity-config.interface';
 
 export const ENTITY_HIERARCHY: EntityHierarchyConfig[] = [

@@ -85,22 +85,22 @@ export class QueueAdminController {
     return this.cascadeQueue.cancelBatchCascade(batchId);
   }
 
-  /**
-   * POST /admin/queues/dlq/retry/:jobId
-   * Retry job from Dead Letter Queue
-   */
-  @Post('dlq/retry/:jobId')
-  async retryFromDLQ(@Param('jobId') jobId: string) {
-    const newBatchId = await this.cascadeQueue.retryFromDLQ(jobId);
-    return { newBatchId, message: 'Job moved from DLQ and queued for retry' };
-  }
+  // /**
+  //  * POST /admin/queues/dlq/retry/:jobId
+  //  * Retry job from Dead Letter Queue
+  //  */
+  // @Post('dlq/retry/:jobId')
+  // async retryFromDLQ(@Param('jobId') jobId: string) {
+  //   const newBatchId = await this.cascadeQueue.retryFromDLQ(jobId);
+  //   return { newBatchId, message: 'Job moved from DLQ and queued for retry' };
+  // }
 
-  /**
-   * GET /admin/queues/dlq
-   * Get all DLQ jobs
-   */
-  @Get('dlq')
-  async getDLQJobs() {
-    return this.cascadeQueue.getDLQJobs();
-  }
+  // /**
+  //  * GET /admin/queues/dlq
+  //  * Get all DLQ jobs
+  //  */
+  // @Get('dlq')
+  // async getDLQJobs() {
+  //   return this.cascadeQueue.getDLQJobs();
+  // }
 }

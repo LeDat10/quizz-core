@@ -13,7 +13,6 @@ import {
 } from 'src/modules/status-cascade/domain/interfaces/cascade-job.interface';
 import {
   BatchProgress,
-  CleanJobsResult,
   JobStatusInfo,
 } from '../../../../../shared/infrastructure/queues/interfaces/queue-job.interface';
 import { entityType } from 'src/shared/infrastructure/queues/types/queue.types';
@@ -360,139 +359,251 @@ export class StatusCascadeQueueService {
   async retryFailedJob(
     queueType: 'batch' | 'level',
     jobId: string,
-  ): Promise<string> {
+  ): Promise<{
+    success: boolean;
+    newJobId?: string;
+    message: string;
+  }> {
     const queue = queueType === 'batch' ? this.batchQueue : this.levelQueue;
     const job = await queue.getJob(jobId);
 
     if (!job) {
-      throw new Error(`Job ${jobId} not found in ${queueType} queue`);
+      return {
+        success: false,
+        message: `Job ${jobId} not found in ${queueType} queue`,
+      };
     }
 
     const state = await job.getState();
     if (state !== 'failed') {
-      throw new Error(
-        `Job ${jobId} is not in failed state (current: ${state})`,
-      );
+      return {
+        success: false,
+        message: `Job ${jobId} is not in failed state (current: ${state})`,
+      };
     }
 
-    // Retry the job
-    await job.retry();
+    try {
+      // Retry the job (Bull will attempt it again)
+      await job.retry();
 
-    return jobId;
+      return {
+        success: true,
+        newJobId: jobId, // Same job, just retried
+        message: `Job ${jobId} queued for retry`,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to retry job: ${(error as Error).message}`,
+      };
+    }
   }
 
   /**
-   * Get all failed jobs for admin review
-   * Includes both queue failures and DLQ
+   * Bulk retry multiple failed jobs
    */
-  async getAllFailedJobs(): Promise<{
-    batchQueue: Array<JobStatusInfo<StatusCascadeBatchJob>>;
-    levelQueue: Array<JobStatusInfo<StatusCascadeLevelJob>>;
-    dlq: Array<JobStatusInfo<StatusCascadeBatchJob>>;
+  async bulkRetryFailedJobs(
+    jobs: Array<{ queueType: 'batch' | 'level'; jobId: string }>,
+  ): Promise<{
+    succeeded: string[];
+    failed: Array<{ jobId: string; error: string }>;
   }> {
-    const [batchFailed, levelFailed, dlqJobs] = await Promise.all([
-      this.batchQueue.getJobs(['failed']),
-      this.levelQueue.getJobs(['failed']),
-      this.dlq.getJobs(['failed', 'waiting', 'completed']),
+    const succeeded: string[] = [];
+    const failed: Array<{ jobId: string; error: string }> = [];
+
+    for (const { queueType, jobId } of jobs) {
+      try {
+        const result = await this.retryFailedJob(queueType, jobId);
+        if (result.success) {
+          succeeded.push(jobId);
+        } else {
+          failed.push({ jobId, error: result.message });
+        }
+      } catch (error) {
+        failed.push({ jobId, error: (error as Error).message });
+      }
+    }
+
+    return { succeeded, failed };
+  }
+
+  /**
+   * Get all failed jobs from both queues
+   */
+  async getAllFailedJobs(options?: {
+    queueType?: 'batch' | 'level' | 'all';
+    limit?: number;
+    offset?: number;
+  }) {
+    const queueType = options?.queueType ?? 'all';
+    const limit = options?.limit ?? 50;
+    const offset = options?.offset ?? 0;
+
+    const fetchBatch = queueType === 'all' || queueType === 'batch';
+    const fetchLevel = queueType === 'all' || queueType === 'level';
+
+    const [batchFailed, levelFailed] = await Promise.all([
+      fetchBatch ? this.batchQueue.getJobs(['failed']) : Promise.resolve([]),
+      fetchLevel ? this.levelQueue.getJobs(['failed']) : Promise.resolve([]),
     ]);
 
+    const allFailed = [
+      ...batchFailed.map((job) => ({
+        queueType: 'batch' as const,
+        job,
+      })),
+      ...levelFailed.map((job) => ({
+        queueType: 'level' as const,
+        job,
+      })),
+    ];
+
+    // Sort by timestamp (newest first)
+    allFailed.sort((a, b) => b.job.timestamp - a.job.timestamp);
+
+    // Paginate
+    const paginated = allFailed.slice(offset, offset + limit);
+
     return {
-      batchQueue: await Promise.all(
-        batchFailed.map((job) => this.getJobStatus(job)),
-      ),
-      levelQueue: await Promise.all(
-        levelFailed.map((job) => this.getJobStatus(job)),
-      ),
-      dlq: await Promise.all(dlqJobs.map((job) => this.getJobStatus(job))),
+      jobs: paginated.map(({ queueType, job }) => ({
+        queueType,
+        id: job.id?.toString() ?? 'unknown',
+        batchId: job.data.batchId,
+        entityType: 'entityType' in job.data ? job.data.entityType : undefined,
+        entityId: 'entityId' in job.data ? job.data.entityId : undefined,
+        level: 'level' in job.data ? job.data.level : undefined,
+        failedReason: job.failedReason,
+        attemptsMade: job.attemptsMade,
+        timestamp: new Date(job.timestamp),
+        data: job.data,
+      })),
+
+      total: allFailed.length,
+      offset,
+      limit,
     };
   }
 
+  // /**
+  //  * Clean up failed jobs that are too old
+  //  * Keep recent failures for debugging
+  //  *
+  //  * @param olderThanDays - Remove failed jobs older than X days (default: 7 days)
+  //  * @returns Number of jobs cleaned
+  //  */
+  // async cleanupOldFailedJobs(
+  //   olderThanDays: number = 7,
+  // ): Promise<CleanJobsResult> {
+  //   const timestamp = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
+
+  //   const [batchFailed, levelFailed, dlqJobs] = await Promise.all([
+  //     this.batchQueue.getJobs(['failed']),
+  //     this.levelQueue.getJobs(['failed']),
+  //     this.dlq.getJobs(['failed', 'waiting', 'completed']),
+  //   ]);
+
+  //   // Filter old failed jobs
+  //   const oldBatchFailed = batchFailed.filter(
+  //     (job) => job.timestamp < timestamp,
+  //   );
+  //   const oldLevelFailed = levelFailed.filter(
+  //     (job) => job.timestamp < timestamp,
+  //   );
+  //   const oldDlqJobs = dlqJobs.filter((job) => job.timestamp < timestamp);
+
+  //   // Remove old failed jobs
+  //   await Promise.all([
+  //     ...oldBatchFailed.map((job) => job.remove()),
+  //     ...oldLevelFailed.map((job) => job.remove()),
+  //     ...oldDlqJobs.map((job) => job.remove()),
+  //   ]);
+
+  //   const batchCount = oldBatchFailed.length;
+  //   const levelCount = oldLevelFailed.length;
+  //   const dlqCount = oldDlqJobs.length;
+
+  //   return {
+  //     batchQueue: batchCount,
+  //     levelQueue: levelCount,
+  //     dlq: dlqCount,
+  //     total: batchCount + levelCount + dlqCount,
+  //   };
+  // }
+
   /**
-   * Clean up failed jobs that are too old
-   * Keep recent failures for debugging
-   *
-   * @param olderThanDays - Remove failed jobs older than X days (default: 7 days)
-   * @returns Number of jobs cleaned
+   * Clean up old failed jobs
    */
-  async cleanupOldFailedJobs(
-    olderThanDays: number = 7,
-  ): Promise<CleanJobsResult> {
+  async cleanupOldFailedJobs(olderThanDays: number = 7): Promise<{
+    batchQueue: number;
+    levelQueue: number;
+    total: number;
+  }> {
     const timestamp = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
 
-    const [batchFailed, levelFailed, dlqJobs] = await Promise.all([
+    const [batchFailed, levelFailed] = await Promise.all([
       this.batchQueue.getJobs(['failed']),
       this.levelQueue.getJobs(['failed']),
-      this.dlq.getJobs(['failed', 'waiting', 'completed']),
     ]);
 
-    // Filter old failed jobs
     const oldBatchFailed = batchFailed.filter(
       (job) => job.timestamp < timestamp,
     );
     const oldLevelFailed = levelFailed.filter(
       (job) => job.timestamp < timestamp,
     );
-    const oldDlqJobs = dlqJobs.filter((job) => job.timestamp < timestamp);
 
-    // Remove old failed jobs
     await Promise.all([
       ...oldBatchFailed.map((job) => job.remove()),
       ...oldLevelFailed.map((job) => job.remove()),
-      ...oldDlqJobs.map((job) => job.remove()),
     ]);
 
-    const batchCount = oldBatchFailed.length;
-    const levelCount = oldLevelFailed.length;
-    const dlqCount = oldDlqJobs.length;
-
     return {
-      batchQueue: batchCount,
-      levelQueue: levelCount,
-      dlq: dlqCount,
-      total: batchCount + levelCount + dlqCount,
+      batchQueue: oldBatchFailed.length,
+      levelQueue: oldLevelFailed.length,
+      total: oldBatchFailed.length + oldLevelFailed.length,
     };
   }
 
-  /**
-   * Retry job from DLQ (manual retry by admin)
-   */
-  async retryFromDLQ(dlqJobId: string): Promise<string> {
-    const dlqJob = await this.dlq.getJob(dlqJobId);
+  // /**
+  //  * Retry job from DLQ (manual retry by admin)
+  //  */
+  // async retryFromDLQ(dlqJobId: string): Promise<string> {
+  //   const dlqJob = await this.dlq.getJob(dlqJobId);
 
-    if (!dlqJob) {
-      throw new Error(`DLQ job ${dlqJobId} not found`);
-    }
+  //   if (!dlqJob) {
+  //     throw new Error(`DLQ job ${dlqJobId} not found`);
+  //   }
 
-    const jobData = { ...dlqJob.data };
-    jobData.retryCount = 0;
-    delete jobData.failureReason;
+  //   const jobData = { ...dlqJob.data };
+  //   jobData.retryCount = 0;
+  //   delete jobData.failureReason;
 
-    const newBatchId = await this.addBatchCascadeJob(
-      jobData.updates,
-      jobData.userId,
-    );
+  //   const newBatchId = await this.addBatchCascadeJob(
+  //     jobData.updates,
+  //     jobData.userId,
+  //   );
 
-    await dlqJob.remove();
+  //   await dlqJob.remove();
 
-    return newBatchId;
-  }
+  //   return newBatchId;
+  // }
 
-  /**
-   * Get all DLQ jobs (for admin dashboard)
-   */
-  async getDLQJobs(): Promise<
-    Array<{
-      id: string;
-      data: StatusCascadeBatchJob;
-      failedAt: Date;
-    }>
-  > {
-    const jobs = await this.dlq.getJobs(['completed', 'failed', 'waiting']);
+  // /**
+  //  * Get all DLQ jobs (for admin dashboard)
+  //  */
+  // async getDLQJobs(): Promise<
+  //   Array<{
+  //     id: string;
+  //     data: StatusCascadeBatchJob;
+  //     failedAt: Date;
+  //   }>
+  // > {
+  //   const jobs = await this.dlq.getJobs(['completed', 'failed', 'waiting']);
 
-    return jobs.map((job) => ({
-      id: job.id?.toString() ?? 'unknown',
-      data: job.data,
-      failedAt: new Date(job.timestamp),
-    }));
-  }
+  //   return jobs.map((job) => ({
+  //     id: job.id?.toString() ?? 'unknown',
+  //     data: job.data,
+  //     failedAt: new Date(job.timestamp),
+  //   }));
+  // }
 }
