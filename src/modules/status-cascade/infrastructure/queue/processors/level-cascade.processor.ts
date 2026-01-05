@@ -9,7 +9,11 @@ import { DataSource } from 'typeorm';
 import { Job, Queue } from 'bull';
 import { StatusCascadeLevelJob } from 'src/modules/status-cascade/domain/interfaces/cascade-job.interface';
 import { getEntityConfig } from 'src/modules/status-cascade/domain/helpers/entity-config.helper';
-import { NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   getAllowedChildStatuses,
   Status,
@@ -50,7 +54,7 @@ export class LevelCascadeProcessor {
 
     const { level, entityType, entityId, newStatus } = job.data;
 
-    const lockKey = `update:${entityType}:${entityId}`;
+    const lockKey = `update:${entityType}:status:${entityId}`;
     let lockId: string | null = '';
 
     const queryRunner = this.connection.createQueryRunner();
@@ -278,6 +282,21 @@ export class LevelCascadeProcessor {
   @OnQueueFailed()
   async handleFailedJob(job: Job<StatusCascadeLevelJob>, error: Error) {
     if (job.attemptsMade >= (job.opts.attempts ?? 1)) {
+      await this.cascadeQueue.moveToDeadLetterQueue(job.data, error.message);
+      await job.remove();
+    }
+
+    if (error instanceof NotFoundException) {
+      await this.cascadeQueue.moveToDeadLetterQueue(job.data, error.message);
+      await job.remove();
+    }
+
+    if (error instanceof BadRequestException) {
+      await this.cascadeQueue.moveToDeadLetterQueue(job.data, error.message);
+      await job.remove();
+    }
+
+    if (error instanceof ConflictException) {
       await this.cascadeQueue.moveToDeadLetterQueue(job.data, error.message);
       await job.remove();
     }
