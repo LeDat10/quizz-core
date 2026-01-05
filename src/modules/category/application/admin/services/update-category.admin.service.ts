@@ -91,14 +91,40 @@ export class UpdateCategoryAdminService {
     let lockSlugKey: string | null = null;
     let lockPositionId: string | null = null;
     let lockPositionKey: string | null = null;
-    const lockStatusKey: string = 'lock:cascade-status';
-    let lockStatusId: string | null = null;
+    let lockUpdateKey: string | null = null;
+    let lockUpdateId: string | null = null;
+
     try {
       const category = await this.categoryRepository.findById(id);
       if (!category) {
         const reason = `Category with ID ${id} not found`;
         this.logger.error(ctx, reason, 'failed', { traceId });
         throw new HttpException(reason, 404);
+      }
+
+      lockUpdateKey = `category:update:${category.id}`;
+
+      // const lockExists = await this.redisService.isLocked(lockUpdateKey);
+
+      // if (lockExists) {
+      //   const reason = 'Resource is currently locked for update';
+      //   this.logger.warn(ctx, 'failed', reason, {
+      //     traceId,
+      //   });
+
+      //   throw new ConflictException(reason);
+      // }
+
+      lockUpdateId =
+        await this.redisService.acquireRedisLockWithRetry(lockUpdateKey);
+
+      if (lockUpdateId) {
+        const reason = 'Resource is currently locked for update';
+        this.logger.warn(ctx, 'failed', reason, {
+          traceId,
+        });
+
+        throw new ConflictException(reason);
       }
 
       let prepareCategory = category;
@@ -210,12 +236,6 @@ export class UpdateCategoryAdminService {
           },
         );
 
-        lockStatusId = await this.redisService.acquireRedisLockWithRetry(
-          lockStatusKey,
-          this.LOCK_TTL,
-          this.MAX_RETRIES,
-        );
-
         newStatus = dto.status;
         shouldCascade = true;
       }
@@ -302,12 +322,11 @@ export class UpdateCategoryAdminService {
         });
       }
 
-      if (lockStatusId && lockStatusKey) {
-        await this.redisService.releaseLock(lockStatusKey, lockStatusId);
-
-        this.logger.debug(ctx, 'processing', 'Position lock released', {
+      if (lockUpdateId && lockUpdateKey) {
+        await this.redisService.releaseLock(lockUpdateKey, lockUpdateId);
+        this.logger.debug(ctx, 'processing', 'Update lock released', {
           traceId,
-          lockKey: lockStatusKey,
+          lockKey: lockPositionKey,
         });
       }
 
