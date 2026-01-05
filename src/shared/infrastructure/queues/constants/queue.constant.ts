@@ -1,3 +1,5 @@
+import { Category } from 'src/modules/category/domain/entities/category.entity';
+
 export const QUEUE_CONSTANTS = {
   // Queue names
   NAMES: {
@@ -17,3 +19,11 @@ export const QUEUE_CONSTANTS = {
     },
   },
 } as const;
+
+export type EntityTypeMap = {
+  category: Category;
+};
+
+export type EntityKeys = keyof EntityTypeMap;
+
+export type EntityInstance<T extends keyof EntityTypeMap> = EntityTypeMap[T];

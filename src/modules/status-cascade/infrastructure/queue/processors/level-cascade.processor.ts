@@ -1,14 +1,23 @@
 import { InjectQueue, OnQueueFailed, Process, Processor } from '@nestjs/bull';
-import { QUEUE_CONSTANTS } from '../../../../../shared/infrastructure/queues/constants/queue.constant';
+import {
+  EntityInstance,
+  EntityTypeMap,
+  QUEUE_CONSTANTS,
+} from '../../../../../shared/infrastructure/queues/constants/queue.constant';
 import { LoggerContext, LoggerHelper } from 'src/shared/common/logging';
 import { DataSource } from 'typeorm';
 import { Job, Queue } from 'bull';
 import { StatusCascadeLevelJob } from 'src/modules/status-cascade/domain/interfaces/cascade-job.interface';
 import { getEntityConfig } from 'src/modules/status-cascade/domain/helpers/entity-config.helper';
 import { NotFoundException } from '@nestjs/common';
-import { Status, StatusImpactEngine } from 'src/shared/common/status';
+import {
+  getAllowedChildStatuses,
+  Status,
+  StatusImpactEngine,
+} from 'src/shared/common/status';
 import { LevelCascadeResult } from '../../../../../shared/infrastructure/queues/interfaces/queue-job.interface';
 import { StatusCascadeQueueService } from '../services/status-cascade-queue.service';
+import { RedisService } from 'src/shared/infrastructure/redis/redis.service';
 
 @Processor(QUEUE_CONSTANTS.NAMES.STATUS_CASCADE_LEVEL)
 export class LevelCascadeProcessor {
@@ -20,6 +29,8 @@ export class LevelCascadeProcessor {
     private levelQueue: Queue<StatusCascadeLevelJob>,
 
     private readonly cascadeQueue: StatusCascadeQueueService,
+
+    private readonly redisService: RedisService,
   ) {}
 
   /**
@@ -39,11 +50,17 @@ export class LevelCascadeProcessor {
 
     const { level, entityType, entityId, newStatus } = job.data;
 
+    const lockKey = `update:${entityType}:${entityId}`;
+    let lockId: string | null = '';
+
     const queryRunner = this.connection.createQueryRunner();
     await queryRunner.connect();
-    await queryRunner.startTransaction();
 
     try {
+      lockId = await this.redisService.acquireRedisLockWithRetry(lockKey);
+
+      await queryRunner.startTransaction();
+
       const config = getEntityConfig(entityType);
       if (!config) {
         throw new NotFoundException(`Unknown entity type: ${entityType}`);
@@ -120,32 +137,33 @@ export class LevelCascadeProcessor {
         };
       }
 
-      const result = await StatusImpactEngine.autoFixChildren(
-        queryRunner,
-        childConfig.entityTarget,
-        directChildren,
-        newStatus,
-        { dryRun: false },
-      );
-
-      this.logger.info(ctx, 'updated', undefined, {
-        childrenUpdated: result.updatedCount,
-        targetStatus: result.targetStatus,
-      });
-
       // 7. Commit transaction (entity + direct children updated atomically)
       await queryRunner.commitTransaction();
 
       // 8. Create next level jobs (OUTSIDE transaction)
       // This is safe - if job creation fails, we can retry without affecting DB
       let nextLevelJobsCreated = 0;
-      if (result.affectedIds.length > 0 && childConfig.childEntityName) {
-        nextLevelJobsCreated = await this.createNextLevelJobs(
-          job.data,
-          result.affectedIds,
-          childConfig.childEntityName,
-          result.targetStatus || newStatus,
-        );
+      if (config.childrenRelation && childConfig.childEntityName) {
+        const childrenRaw = (entity as Record<string, unknown>)[
+          config.childrenRelation
+        ];
+
+        if (
+          childrenRaw &&
+          Array.isArray(childrenRaw) &&
+          childrenRaw.length > 0
+        ) {
+          const childName = childConfig.childEntityName as keyof EntityTypeMap;
+          console.log(childName);
+          type ChildType = EntityInstance<typeof childName>;
+
+          nextLevelJobsCreated = await this.createNextLevelJobs<ChildType>(
+            job.data,
+            childrenRaw as ChildType[],
+            childConfig.childEntityName,
+            newStatus,
+          );
+        }
       }
 
       await job.progress(100);
@@ -154,9 +172,9 @@ export class LevelCascadeProcessor {
         entityId,
         entityType,
         level,
-        directChildrenUpdated: result.updatedCount,
-        affectedChildIds: result.affectedIds,
-        targetStatus: result.targetStatus,
+        directChildrenUpdated: 0,
+        affectedChildIds: [],
+        targetStatus: newStatus,
         nextLevelJobsCreated,
       };
     } catch (error) {
@@ -165,15 +183,19 @@ export class LevelCascadeProcessor {
       throw error;
     } finally {
       await queryRunner.release();
+
+      if (lockId) {
+        await this.redisService.releaseLock(lockKey, lockId);
+      }
     }
   }
 
   /**
    * Create jobs for next level (children of updated entities)
    */
-  private async createNextLevelJobs(
+  private async createNextLevelJobs<T extends { id: string; status: Status }>(
     parentJob: StatusCascadeLevelJob,
-    childIds: string[],
+    children: T[],
     childEntityType: string,
     newStatus: Status,
   ): Promise<number> {
@@ -188,37 +210,44 @@ export class LevelCascadeProcessor {
     const parentJobId = `${batchId}-L${level}-${entityType}-${entityId}`;
     // Create jobs in batches to avoid overwhelming queue
     const BATCH_SIZE = 50;
-    const batches = this.chunkArray(childIds, BATCH_SIZE);
 
+    const batches = this.chunkArray(children, BATCH_SIZE);
+    const allowed = getAllowedChildStatuses(newStatus);
     let totalJobsCreated = 0;
 
     for (const batch of batches) {
-      const jobs = batch.map((childId) => ({
-        name: 'cascade-level',
-        data: {
-          batchId,
-          parentJobId,
-          level: nextLevel,
-          entityType: childEntityType,
-          entityId: childId,
-          newStatus,
-          parentStatus: newStatus,
-          userId: parentJob.userId,
-          metadata: {
-            ...metadata,
-            currentPath: `${metadata?.currentPath} > ${childEntityType}-${childId}`,
-          },
-        } as StatusCascadeLevelJob,
-        opts: {
-          jobId: `${batchId}-L${nextLevel}-${childEntityType}-${childId}`,
-          priority: nextLevel, // Lower priority for deeper levels
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 2000,
-          },
-        },
-      }));
+      const jobs = batch
+        .filter((child) => !allowed.includes(child.status))
+        .map((child) => {
+          const targetStatus =
+            StatusImpactEngine.determineTargetStatus(newStatus);
+          return {
+            name: 'cascade-level',
+            data: {
+              batchId,
+              parentJobId,
+              level: nextLevel,
+              entityType: childEntityType,
+              entityId: child.id,
+              newStatus,
+              parentStatus: targetStatus,
+              userId: parentJob.userId,
+              metadata: {
+                ...metadata,
+                currentPath: `${metadata?.currentPath} > ${childEntityType}-${child.id}`,
+              },
+            } as StatusCascadeLevelJob,
+            opts: {
+              jobId: `${batchId}-L${nextLevel}-${childEntityType}-${child.status}`,
+              priority: nextLevel, // Lower priority for deeper levels
+              attempts: 3,
+              backoff: {
+                type: 'exponential',
+                delay: 2000,
+              },
+            },
+          };
+        });
 
       await this.levelQueue.addBulk(jobs);
       totalJobsCreated += batch.length;

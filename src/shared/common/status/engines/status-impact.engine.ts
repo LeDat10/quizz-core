@@ -31,7 +31,7 @@ export class StatusImpactEngine {
     return 'Unknown';
   }
 
-  private static determineTargetStatus(parentStatus: Status): Status | null {
+  static determineTargetStatus(parentStatus: Status): Status | null {
     const allowed = getAllowedChildStatuses(parentStatus);
 
     if (!allowed.length) {

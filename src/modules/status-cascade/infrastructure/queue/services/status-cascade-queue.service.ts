@@ -507,52 +507,6 @@ export class StatusCascadeQueueService {
     };
   }
 
-  // /**
-  //  * Clean up failed jobs that are too old
-  //  * Keep recent failures for debugging
-  //  *
-  //  * @param olderThanDays - Remove failed jobs older than X days (default: 7 days)
-  //  * @returns Number of jobs cleaned
-  //  */
-  // async cleanupOldFailedJobs(
-  //   olderThanDays: number = 7,
-  // ): Promise<CleanJobsResult> {
-  //   const timestamp = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
-
-  //   const [batchFailed, levelFailed, dlqJobs] = await Promise.all([
-  //     this.batchQueue.getJobs(['failed']),
-  //     this.levelQueue.getJobs(['failed']),
-  //     this.dlq.getJobs(['failed', 'waiting', 'completed']),
-  //   ]);
-
-  //   // Filter old failed jobs
-  //   const oldBatchFailed = batchFailed.filter(
-  //     (job) => job.timestamp < timestamp,
-  //   );
-  //   const oldLevelFailed = levelFailed.filter(
-  //     (job) => job.timestamp < timestamp,
-  //   );
-  //   const oldDlqJobs = dlqJobs.filter((job) => job.timestamp < timestamp);
-
-  //   // Remove old failed jobs
-  //   await Promise.all([
-  //     ...oldBatchFailed.map((job) => job.remove()),
-  //     ...oldLevelFailed.map((job) => job.remove()),
-  //     ...oldDlqJobs.map((job) => job.remove()),
-  //   ]);
-
-  //   const batchCount = oldBatchFailed.length;
-  //   const levelCount = oldLevelFailed.length;
-  //   const dlqCount = oldDlqJobs.length;
-
-  //   return {
-  //     batchQueue: batchCount,
-  //     levelQueue: levelCount,
-  //     dlq: dlqCount,
-  //     total: batchCount + levelCount + dlqCount,
-  //   };
-  // }
-
   /**
    * Clean up old failed jobs
    */
@@ -586,47 +540,4 @@ export class StatusCascadeQueueService {
       total: oldBatchFailed.length + oldLevelFailed.length,
     };
   }
-
-  // /**
-  //  * Retry job from DLQ (manual retry by admin)
-  //  */
-  // async retryFromDLQ(dlqJobId: string): Promise<string> {
-  //   const dlqJob = await this.dlq.getJob(dlqJobId);
-
-  //   if (!dlqJob) {
-  //     throw new Error(`DLQ job ${dlqJobId} not found`);
-  //   }
-
-  //   const jobData = { ...dlqJob.data };
-  //   jobData.retryCount = 0;
-  //   delete jobData.failureReason;
-
-  //   const newBatchId = await this.addBatchCascadeJob(
-  //     jobData.updates,
-  //     jobData.userId,
-  //   );
-
-  //   await dlqJob.remove();
-
-  //   return newBatchId;
-  // }
-
-  // /**
-  //  * Get all DLQ jobs (for admin dashboard)
-  //  */
-  // async getDLQJobs(): Promise<
-  //   Array<{
-  //     id: string;
-  //     data: StatusCascadeBatchJob;
-  //     failedAt: Date;
-  //   }>
-  // > {
-  //   const jobs = await this.dlq.getJobs(['completed', 'failed', 'waiting']);
-
-  //   return jobs.map((job) => ({
-  //     id: job.id?.toString() ?? 'unknown',
-  //     data: job.data,
-  //     failedAt: new Date(job.timestamp),
-  //   }));
-  // }
 }
