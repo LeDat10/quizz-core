@@ -53,35 +53,28 @@ export class CategoryTypeOrmRepository implements CategoryRepository {
     categoryB: Category,
     queryRunner: QueryRunner,
   ): Promise<{ categoryA: Category; categoryB: Category }> {
-    const tempPosition = -1;
+    const TEMP_POSITION = -1;
+    const positionA = categoryA.position;
+    const positionB = categoryB.position;
+
     await queryRunner.manager.update(
       Category,
       { id: categoryA.id },
-      { position: tempPosition },
+      { position: TEMP_POSITION },
     );
-
     await queryRunner.manager.update(
       Category,
       { id: categoryB.id },
-      { position: categoryA.position },
+      { position: positionA },
     );
-
     await queryRunner.manager.update(
       Category,
       { id: categoryA.id },
-      { position: categoryB.position },
+      { position: positionB },
     );
 
-    categoryA.position = categoryB.position;
-    categoryB.position = categoryA.position;
+    [categoryA.position, categoryB.position] = [positionB, positionA];
 
     return { categoryA, categoryB };
-    // const temp = categoryA.position;
-    // categoryA.position = categoryB.position;
-    // categoryB.position = temp;
-
-    // const saved = await queryRunner.manager.save([categoryA, categoryB]);
-
-    // return { categoryA: saved[0], categoryB: saved[1] };
   }
 }
