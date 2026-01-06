@@ -89,10 +89,10 @@ export class UpdateCategoryAdminService {
 
     let lockSlugId: string | null = null;
     let lockSlugKey: string | null = null;
-    let lockPositionId1: string | null = null;
-    let lockPositionKey1: string | null = null;
-    let lockPositionId2: string | null = null;
-    let lockPositionKey2: string | null = null;
+    let lockOldPositionId: string | null = null;
+    let lockOldPositionKey: string | null = null;
+    let lockNewPositionId: string | null = null;
+    let lockNewPositionKey: string | null = null;
     let lockUpdateKey: string | null = null;
     let lockUpdateId: string | null = null;
 
@@ -126,14 +126,14 @@ export class UpdateCategoryAdminService {
           traceId,
         });
 
-        lockPositionKey1 = `category:position${category.position}`;
-        lockPositionId1 = await this.redisService.acquireRedisLockWithRetry(
-          lockPositionKey1,
+        lockOldPositionKey = `category:update:position${category.position}`;
+        lockOldPositionId = await this.redisService.acquireRedisLockWithRetry(
+          lockOldPositionKey,
           this.LOCK_TTL,
           this.MAX_RETRIES,
         );
 
-        if (!lockPositionId1) {
+        if (!lockOldPositionId) {
           this.logger.warn(ctx, 'failed', 'Failed to acquire position lock', {
             traceId,
             attempts: this.MAX_RETRIES,
@@ -144,14 +144,14 @@ export class UpdateCategoryAdminService {
           );
         }
 
-        lockPositionKey2 = `category:position${dto.position}`;
-        lockPositionId2 = await this.redisService.acquireRedisLockWithRetry(
-          lockPositionKey2,
+        lockNewPositionKey = `category:update:position${dto.position}`;
+        lockNewPositionId = await this.redisService.acquireRedisLockWithRetry(
+          lockNewPositionKey,
           this.LOCK_TTL,
           this.MAX_RETRIES,
         );
 
-        if (!lockPositionId2) {
+        if (!lockNewPositionId) {
           this.logger.warn(ctx, 'failed', 'Failed to acquire position lock', {
             traceId,
             attempts: this.MAX_RETRIES,
@@ -181,14 +181,14 @@ export class UpdateCategoryAdminService {
           );
         }
 
-        if (!recordWithPosition && lockPositionId2 && lockPositionKey2) {
+        if (!recordWithPosition && lockNewPositionId && lockNewPositionKey) {
           await this.redisService.releaseLock(
-            lockPositionKey2,
-            lockPositionId2,
+            lockNewPositionKey,
+            lockNewPositionId,
           );
           this.logger.debug(ctx, 'processing', 'Max position lock released', {
             traceId,
-            lockKey: lockPositionId2,
+            lockKey: lockNewPositionId,
           });
         }
 
@@ -326,19 +326,25 @@ export class UpdateCategoryAdminService {
         });
       }
 
-      if (lockPositionId1 && lockPositionKey1) {
-        await this.redisService.releaseLock(lockPositionKey1, lockPositionId1);
+      if (lockOldPositionId && lockOldPositionKey) {
+        await this.redisService.releaseLock(
+          lockOldPositionKey,
+          lockOldPositionId,
+        );
         this.logger.debug(ctx, 'processing', 'Position lock released', {
           traceId,
-          lockKey: lockPositionKey1,
+          lockKey: lockOldPositionKey,
         });
       }
 
-      if (lockPositionId2 && lockPositionKey2) {
-        await this.redisService.releaseLock(lockPositionKey2, lockPositionId2);
+      if (lockNewPositionId && lockNewPositionKey) {
+        await this.redisService.releaseLock(
+          lockNewPositionKey,
+          lockNewPositionId,
+        );
         this.logger.debug(ctx, 'processing', 'Position lock released', {
           traceId,
-          lockKey: lockPositionKey2,
+          lockKey: lockNewPositionKey,
         });
       }
 
@@ -346,7 +352,7 @@ export class UpdateCategoryAdminService {
         await this.redisService.releaseLock(lockUpdateKey, lockUpdateId);
         this.logger.debug(ctx, 'processing', 'Update lock released', {
           traceId,
-          lockKey: lockPositionKey2,
+          lockKey: lockNewPositionKey,
         });
       }
 
