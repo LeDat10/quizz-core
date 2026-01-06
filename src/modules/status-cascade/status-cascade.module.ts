@@ -12,6 +12,7 @@ import { DLQManagementService } from './infrastructure/queue/services/dlq-manage
 import { BatchCascadeProcessor } from './infrastructure/queue/processors/batch-cascade.processor';
 import { LevelCascadeProcessor } from './infrastructure/queue/processors/level-cascade.processor';
 import { QueueCleanupJobService } from './infrastructure/queue/services/cleanup.service';
+import { RedisModule } from 'src/shared/infrastructure/redis/redis.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { QueueCleanupJobService } from './infrastructure/queue/services/cleanup.
         removeOnFail: false,
       },
     }),
+    RedisModule,
   ],
 
   controllers: [

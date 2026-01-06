@@ -10,6 +10,7 @@ import { SlugService } from 'src/shared/common/slugs/slug.service';
 import { UpdateCategoryAdminService } from './application/admin/services/update-category.admin.service';
 import { StatusValidationService } from 'src/shared/common/status/services/status-validation.service';
 import { StatusCascadeModule } from 'src/modules/status-cascade/status-cascade.module';
+import { ChangeCategoryPositionAdminService } from './application/admin/services/change-position.admin.service';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { StatusCascadeModule } from 'src/modules/status-cascade/status-cascade.m
     AdminCreateCategoryService,
     UpdateCategoryAdminService,
     StatusValidationService,
+    ChangeCategoryPositionAdminService,
     {
       provide: 'CATEGORY_REPOSITORY',
       useClass: CategoryTypeOrmRepository,
